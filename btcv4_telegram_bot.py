@@ -224,13 +224,13 @@ class BTCV4Bot:
         """获取实时数据"""
         result = {}
 
-        # Binance价格和成交量
+        # Binance价格和成交量（获取昨天的已收盘日线数据）
         try:
             url = "https://api.binance.com/api/v3/klines"
-            params = {'symbol': 'BTCUSDT', 'interval': '1d', 'limit': 1}
+            params = {'symbol': 'BTCUSDT', 'interval': '1d', 'limit': 2}
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
-            data = response.json()[0]
+            data = response.json()[0]  # 取data[0]是昨天已收盘的日线，data[1]是今天正在形成中的
 
             result['price'] = float(data[4])
             result['volume'] = float(data[5])
