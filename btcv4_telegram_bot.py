@@ -17,10 +17,10 @@ import csv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# 从环境变量读取配置
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')
-COINALYZE_API_KEY = os.getenv('COINALYZE_API_KEY')
+# 从环境变量读取配置（自动去除前后空格）
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '').strip()
+CHAT_ID = os.getenv('CHAT_ID', '').strip()
+COINALYZE_API_KEY = os.getenv('COINALYZE_API_KEY', '').strip()
 COINALYZE_BASE_URL = "https://api.coinalyze.net/v1"
 
 # 验证必需的环境变量
