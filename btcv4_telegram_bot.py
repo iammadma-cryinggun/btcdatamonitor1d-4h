@@ -46,6 +46,50 @@ class BTCV4Bot:
         self.log_file = 'btcv4_query_log.csv'
         self._init_log_file()
 
+        # 保存application引用用于定时任务
+        self.application = None
+        self.chat_id = CHAT_ID
+
+    async def daily_report_job(self, context: ContextTypes.DEFAULT_TYPE):
+        """每日定时推送任务"""
+        try:
+            print(f"\n{'='*100}")
+            print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - 执行每日定时推送")
+            print(f"{'='*100}")
+
+            # 获取实时数据
+            result = self.get_realtime_data()
+            if not result:
+                print("❌ 定时推送失败：无法获取实时数据")
+                return
+
+            # 计算诊断
+            diagnosis = self.calculate_diagnosis(result)
+
+            # 记录日志
+            self._log_query("daily_auto", diagnosis)
+
+            # 格式化报告
+            report = self.format_diagnosis_report(diagnosis, "日线日报")
+
+            # 添加定时推送标识
+            daily_report = f"""
+🔔 *每日日线监控报告*
+{report}
+            """
+
+            # 发送到Telegram
+            await context.bot.send_message(
+                chat_id=self.chat_id,
+                text=daily_report,
+                parse_mode='Markdown'
+            )
+
+            print(f"✅ 每日报告推送成功")
+
+        except Exception as e:
+            print(f"❌ 定时推送失败: {str(e)}")
+
     def _init_log_file(self):
         """初始化日志文件"""
         if not os.path.exists(self.log_file):
@@ -409,17 +453,35 @@ if __name__ == "__main__":
     # 创建Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    # 保存application引用
+    bot.application = application
+
     # 注册命令处理器 - 只保留三个核心命令
     application.add_handler(CommandHandler("1d", bot.cmd_1d))
     application.add_handler(CommandHandler("1h", bot.cmd_1h))
     application.add_handler(CommandHandler("4h", bot.cmd_4h))
 
+    # ==================== [定时任务配置] ====================
+    # 每天UTC 0:00执行日报推送
+    # 使用cron语法：秒 分 时 日 月 周
+    # UTC 0:00 = 北京时间 8:00（冬令时）或 7:00（夏令时）
+    job_queue = application.job_queue
+
+    # 每天00:00 UTC执行
+    job_queue.run_daily(
+        callback=bot.daily_report_job,
+        time=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
+        name='daily_report'
+    )
+
     print("✅ Bot已启动，可以接收命令了")
+    print("⏰ 定时任务：每天UTC 0:00自动推送日线报告")
     print("="*100)
     print("\n可用命令:")
     print("  /1d - 查看日线诊断报告")
     print("  /1h [价格] [成交量] - 分析1H数据（示例: /1h 91716 1258.06）")
     print("  /4h [价格] [成交量] - 分析4H数据（示例: /4h 92000 15000）")
+    print("\n定时推送：每天UTC 0:00自动推送日线监控报告")
     print("="*100)
 
     # 运行Bot
