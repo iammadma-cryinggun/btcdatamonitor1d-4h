@@ -343,6 +343,197 @@ class BTCV41System:
             print(f"[V4.0.1] 日志记录失败: {e}")
 
 
+class BTCV41_4HSystem:
+    """V4.0.1 4H系统 - V7.0引擎（4小时级别）+ 准确率跟踪"""
+
+    def __init__(self, df):
+        self.df = df
+
+        # 计算ATR
+        atr_period = 14
+        high = df["最高价"]
+        low = df["最低价"]
+        close = df["收盘价"]
+        prev_close = close.shift(1)
+
+        tr1 = high - low
+        tr2 = abs(high - prev_close)
+        tr3 = abs(low - prev_close)
+
+        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        self.df['ATR'] = true_range.ewm(span=atr_period, adjust=False).mean()
+
+        # 初始化V7.0引擎（4H参数）
+        self.engine = V70PredatorEngineFixed(
+            zscore_window=180,              # 180个4小时 = 30天
+            delta_ls_window=1,              # 1个4小时
+            delta_ls_accel_window=1,        # 1个4小时
+            ema_span=5,                     # EMA平滑
+            data_frequency_hours=4          # 4小时数据
+        )
+
+        # 初始化市场过滤器
+        self.market_filter = MarketFilter()
+
+        # 预热引擎（使用历史数据）
+        for idx, row in self.df.iterrows():
+            self.engine.update_data(row)
+
+        # 日志文件
+        self.log_file = 'btcv4_1_4h_alert_log.csv'
+        self.accuracy_log_file = 'btcv4_1_4h_accuracy_log.csv'
+        self._init_log_files()
+
+        # 存储4H数据点（用于准确率验证）
+        self.data_4h_history = []
+
+    def _init_log_files(self):
+        """初始化日志文件"""
+        # 预警日志
+        if not os.path.exists(self.log_file):
+            with open(self.log_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    'timestamp', 'alert_level', 'pulse_score', 'direction',
+                    'market_environment', 'filter_action', 'price', 'ls_ratio',
+                    'delta2_ls', 'z_liq', 'z_vol', 'z_div_oi',
+                    'actual_outcome', 'notes'
+                ])
+            print(f"[V4.0.1 4H] 预警日志已创建: {self.log_file}")
+
+        # 准确率日志
+        if not os.path.exists(self.accuracy_log_file):
+            with open(self.accuracy_log_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    'signal_timestamp', 'signal_level', 'signal_score', 'signal_direction',
+                    'signal_price', 'signal_date',
+                    'check_4h_price', 'check_4h_change_pct', 'check_4h_accurate',
+                    'check_8h_price', 'check_8h_change_pct', 'check_8h_accurate',
+                    'check_12h_price', 'check_12h_change_pct', 'check_12h_accurate',
+                    'check_24h_price', 'check_24h_change_pct', 'check_24h_accurate',
+                    'validation_timestamp'
+                ])
+            print(f"[V4.0.1 4H] 准确率日志已创建: {self.accuracy_log_file}")
+
+    def get_alert(self, realtime_4h_data):
+        """获取V4.0.1 4H预警"""
+        # 构造数据格式
+        row = {
+            '日期': realtime_4h_data['date'],
+            '开盘价': realtime_4h_data.get('open', realtime_4h_data['price']),
+            '最高价': realtime_4h_data.get('high', realtime_4h_data['price']),
+            '最低价': realtime_4h_data.get('low', realtime_4h_data['price']),
+            '收盘价': realtime_4h_data['price'],
+            '成交量(BTC)': realtime_4h_data['volume'],
+            '多空比(LS)': realtime_4h_data['ls'],
+            '持仓量(OI-百万)': realtime_4h_data['oi'],
+            '清算量(美元)': realtime_4h_data['liq'],
+            '资金费率(%)': realtime_4h_data.get('fr', 0),
+            'ATR': self.df['ATR'].iloc[-1]
+        }
+
+        # 更新引擎
+        self.engine.update_data(row)
+
+        # 获取预警
+        alert = self.engine.get_predator_alert()
+
+        # 获取市场环境
+        market_env = self.market_filter.check_market_environment(self.df, lookback=60)
+
+        # 判断是否过滤
+        filter_action = 'EXECUTED'
+        if alert['direction'] == 'SHORT':
+            should_skip = self.market_filter.should_skip_short_alert(market_env)
+            if should_skip:
+                filter_action = 'FILTERED'
+
+        return alert, market_env, filter_action
+
+    def format_report(self, realtime_4h_data, alert, market_env, filter_action):
+        """格式化V4.0.1 4H报告"""
+        env_emoji = {
+            'STRONG_BULL': '🚀 强牛市',
+            'BULL': '📈 牛市',
+            'NEUTRAL': '⏸️ 震荡',
+            'BEAR': '📉 熊市',
+            'STRONG_BEAR': '🔻 强熊市'
+        }
+        env_text = env_emoji.get(market_env['environment'], market_env['environment'])
+
+        if filter_action == 'FILTERED':
+            filter_status = f"🔕 \\*\\*已过滤\\*\\* ({env_text})"
+            filter_reason = f"牛市阶段跳过做空（价格趋势: {market_env['price_trend']:+.1f}%）"
+        else:
+            filter_status = f"✅ \\*\\*执行\\*\\* ({env_text})"
+            filter_reason = f"市场环境适合（价格趋势: {market_env['price_trend']:+.1f}%）"
+
+        level_emoji = {
+            'LEVEL 3 (坍塌)': '🔴',
+            'LEVEL 2 (临界)': '🟠',
+            'LEVEL 1 (监视)': '🟡',
+            'NO_SIGNAL': '✅'
+        }
+        level_emoji_text = level_emoji.get(alert['level'], '⚪')
+
+        safe_level = alert['level'].replace('(', '\\(').replace(')', '\\)').replace('*', '\\*')
+
+        details = alert['details']
+
+        report = f"""
+*🔍 V4.0.1 4H系统* \\(V7.0引擎\\)
+{level_emoji_text} \\*\\*{safe_level}\\*\\* \\(Score: {alert['pulse_score']:.1f}\\)
+• 方向: `{alert['direction']}`
+• Z\\_Liq: `{details.get('z_liq', 0):.2f}`
+• Δ²LS: `{details.get('delta2_ls', 0):.4f}`
+
+*🌍 市场环境*
+{filter_status}
+{filter_reason}
+
+💰 价格: `${realtime_4h_data['price']:,.2f}`
+📊 LS: `{realtime_4h_data['ls']:.3f}`
+💼 OI: `${realtime_4h_data['oi']:,.2f}M`
+"""
+        if 'LEVEL 3' in alert['level']:
+            if filter_action == 'FILTERED':
+                report += "⚠️ LEVEL 3但牛市，建议跳过\n"
+            else:
+                report += "🚨 LEVEL 3且适合，\\*\\*坚决做空\\*\\*\n"
+        elif 'LEVEL 2' in alert['level']:
+            report += "⚠️ LEVEL 2临界状态\n"
+        else:
+            report += "✅ 无明确预警\n"
+
+        return report
+
+    def log_alert(self, alert, market_env, filter_action):
+        """记录V4.0.1 4H预警日志"""
+        try:
+            details = alert['details']
+            with open(self.log_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    alert['level'],
+                    f"{alert['pulse_score']:.2f}",
+                    alert['direction'],
+                    market_env['environment'],
+                    filter_action,
+                    details['current_price'],
+                    details.get('ls_ratio', 0),
+                    details.get('delta2_ls', 0),
+                    details.get('z_liq', 0),
+                    details.get('z_vol', 0),
+                    details.get('z_div_oi', 0),
+                    '',  # actual_outcome
+                    ''   # notes
+                ])
+        except Exception as e:
+            print(f"[V4.0.1 4H] 日志记录失败: {e}")
+
+
 class BTCHybridBot:
     """BTC V4.0 + V4.0.1 混合Bot"""
 
@@ -354,12 +545,15 @@ class BTCHybridBot:
         self.df = self.df.sort_values('日期').reset_index(drop=True)
         print(f"[OK] 历史数据加载完成: {len(self.df)} 天")
 
-        # 初始化两个系统
+        # 初始化三个系统
         self.v40_system = BTCV40System(self.df)
         print(f"[OK] V4.0系统初始化完成")
 
         self.v41_system = BTCV41System(self.df)
-        print(f"[OK] V4.0.1系统初始化完成")
+        print(f"[OK] V4.0.1系统初始化完成（日线）")
+
+        self.v41_4h_system = BTCV41_4HSystem(self.df)
+        print(f"[OK] V4.0.1系统初始化完成（4小时）")
 
         # 保存application引用
         self.application = None
@@ -574,6 +768,58 @@ class BTCHybridBot:
             traceback.print_exc()
             await msg.edit_text(f"❌ 实时数据查询失败: {str(e)}")
 
+    async def cmd_status_4h(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """V4.0.1 4H: 查看4小时级别系统状态"""
+        msg = await update.message.reply_text("⏳ 正在获取4小时数据...")
+
+        try:
+            result = self.get_4h_data()
+            if not result:
+                await msg.edit_text("❌ 无法获取4小时数据")
+                return
+
+            # V4.0.1 4H预警
+            v41_4h_alert, market_env_4h, filter_action_4h = self.v41_4h_system.get_alert(result)
+
+            # 格式化报告
+            data_date = result.get('date', datetime.now())
+            data_source = result.get('data_source', 'API (4H K线)')
+
+            report = f"""
+📊 \\*\\*V4.0.1 4H系统状态\\*\\*
+
+📅 \\*\\*K线时间\\*\\*: `{data_date.strftime('%Y-%m-%d %H:%M')}`
+📡 \\*\\*数据来源\\*\\*: `{data_source}`
+
+💰 \\*\\*价格\\*\\*: `${result['price']:,.2f}`
+📊 \\*\\*LS\\*\\*: `{result['ls']:.3f}`
+💼 \\*\\*OI\\*\\*: `${result['oi']:,.2f}M`
+💥 \\*\\*清算\\*\\*: `${result['liq']:,.0f}`
+📈 \\*\\*FR\\*\\*: `{result.get('fr', 0):.3f}%`
+
+{self.v41_4h_system.format_report(result, v41_4h_alert, market_env_4h, filter_action_4h)}
+
+🕐 `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+📈 4H系统数据更及时，敏感度更高
+            """
+
+            await msg.edit_text(report, parse_mode='Markdown')
+
+            # 记录日志
+            self.v41_4h_system.log_alert(v41_4h_alert, market_env_4h, filter_action_4h)
+
+            # 如果是LEVEL 3且未被过滤，发送额外通知
+            if 'LEVEL 3' in v41_4h_alert['level'] and filter_action_4h == 'EXECUTED':
+                await update.message.reply_text(
+                    f"🚨 *4H系统检测到LEVEL 3信号*\n\n{v41_4h_alert['level']} (Score: {v41_4h_alert['pulse_score']:.1f})\n方向: {v41_4h_alert['direction']}",
+                    parse_mode='Markdown'
+                )
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await msg.edit_text(f"❌ 4H状态查询失败: {str(e)}")
+
     async def cmd_compare(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """对比两个系统的统计信息"""
         try:
@@ -639,15 +885,18 @@ class BTCHybridBot:
 
 *🔍 V4.0.1 命令\\(V7.0引擎\\)*
 • /status - 查看混合系统状态（已收盘交易日数据）
+• /status_4h - 查看V4.0.1的4小时级别状态（实时K线）
 • /check - 查看实时市场数据（当前最新ticker）
 • /compare - 对比两个系统的统计信息
 
 *📊 系统特性*
 • V4.0: 百分位评分 + Crash/Surge评分
-• V4.0.1: V7.0引擎 + 三级预警 + 市场过滤器
+• V4.0.1日线: V7.0引擎 + 三级预警 + 市场过滤器
+• V4.0.1 4H: V7.0引擎（4H参数）+ 更及时预警 + 准确率跟踪
 
 *📅 数据说明*
-• /status 使用已收盘交易日的完整数据（4.0和4.0.1时间同步）
+• /status 使用已收盘交易日的完整数据（V4.0和V4.0.1日线时间同步）
+• /status_4h 使用4小时K线数据（更及时，敏感度更高）
 • /check 使用当前最新的实时ticker数据
 
 *📝 日志系统*
@@ -781,6 +1030,150 @@ class BTCHybridBot:
 
         except Exception as e:
             result['fr'] = self.df['资金费率(%)'].dropna().tail(1).iloc[0]
+
+        return result
+
+    def get_4h_data(self):
+        """获取4小时K线数据（用于V7.0 4H引擎）"""
+        result = {}
+
+        try:
+            # 获取最近180个4小时K线（30天数据）
+            url = "https://api.binance.com/api/v3/klines"
+            params = {'symbol': 'BTCUSDT', 'interval': '4h', 'limit': 180}
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            klines = response.json()
+
+            if len(klines) == 0:
+                print("[ERROR] 未获取到4H数据")
+                return None
+
+            # 获取最新的已收盘4小时K线
+            latest_kline = klines[-1]
+
+            result['price'] = float(latest_kline[4])  # 收盘价
+            result['volume'] = float(latest_kline[5])  # 成交量
+            result['open'] = float(latest_kline[0])    # 开盘价
+            result['high'] = float(latest_kline[2])    # 最高价
+            result['low'] = float(latest_kline[3])     # 最低价
+
+            # K线时间（转换为北京时间）
+            close_time_ts = int(latest_kline[6]) / 1000
+            result['date'] = datetime.fromtimestamp(close_time_ts)
+            result['data_source'] = 'API (4H K线)'
+
+            # 获取LS/OI/FR的最新数据
+            now = datetime.now()
+            to_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            from_date = to_date - timedelta(days=3)
+            from_ts = int(from_date.timestamp())
+            to_ts = int(to_date.timestamp())
+
+            headers = {'Authorization': f'Bearer {COINALYZE_API_KEY}'}
+
+            # LS-Ratio
+            try:
+                url = f"{COINALYZE_BASE_URL}/long-short-ratio-history"
+                params = {
+                    'symbols': 'BTCUSD_PERP.A',
+                    'interval': '4h',  # 4小时数据
+                    'from': from_ts,
+                    'to': to_ts
+                }
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()[0]['history']
+                    for item in reversed(data):
+                        if item.get('r') is not None:
+                            result['ls'] = item['r']
+                            break
+                else:
+                    # 降级到日线数据
+                    params['interval'] = 'daily'
+                    response = requests.get(url, params=params, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()[0]['history']
+                        for item in reversed(data):
+                            if item.get('r') is not None:
+                                result['ls'] = item['r']
+                                break
+                    else:
+                        result['ls'] = self.df['多空比(LS)'].dropna().tail(1).iloc[0]
+            except:
+                result['ls'] = self.df['多空比(LS)'].dropna().tail(1).iloc[0]
+
+            # OI
+            try:
+                url = f"{COINALYZE_BASE_URL}/open-interest-history"
+                params = {
+                    'symbols': 'BTCUSD_PERP.A',
+                    'interval': '4h',
+                    'from': from_ts,
+                    'to': to_ts
+                }
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()[0]['history']
+                    for item in reversed(data):
+                        if item.get('c') is not None:
+                            result['oi'] = item['c'] / 1_000_000
+                            break
+                else:
+                    params['interval'] = 'daily'
+                    response = requests.get(url, params=params, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()[0]['history']
+                        for item in reversed(data):
+                            if item.get('c') is not None:
+                                result['oi'] = item['c'] / 1_000_000
+                                break
+                    else:
+                        result['oi'] = self.df['持仓量(OI-百万)'].dropna().tail(1).iloc[0]
+            except:
+                result['oi'] = self.df['持仓量(OI-百万)'].dropna().tail(1).iloc[0]
+
+            # FR
+            try:
+                url = f"{COINALYZE_BASE_URL}/funding-rate-history"
+                params = {
+                    'symbols': 'BTCUSD_PERP.A',
+                    'interval': '4h',
+                    'from': from_ts,
+                    'to': to_ts
+                }
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()[0]['history']
+                    for item in reversed(data):
+                        if item.get('r') is not None:
+                            result['fr'] = item['r']
+                            break
+                else:
+                    params['interval'] = 'daily'
+                    response = requests.get(url, params=params, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()[0]['history']
+                        for item in reversed(data):
+                            if item.get('r') is not None:
+                                result['fr'] = item['r']
+                                break
+                    else:
+                        result['fr'] = self.df['资金费率(%)'].dropna().tail(1).iloc[0]
+            except:
+                result['fr'] = self.df['资金费率(%)'].dropna().tail(1).iloc[0]
+
+            # 清算量（使用历史数据最新值）
+            liq_series = self.df['清算量(美元)'].dropna()
+            liq_nonzero = liq_series[liq_series > 0]
+            if len(liq_nonzero) > 0:
+                result['liq'] = liq_nonzero.tail(1).iloc[0]
+            else:
+                result['liq'] = liq_series.tail(1).iloc[0]
+
+        except Exception as e:
+            print(f"[ERROR] 获取4H数据失败: {e}")
+            return None
 
         return result
 
@@ -940,6 +1333,7 @@ if __name__ == "__main__":
 
     # 注册V4.0.1命令处理器
     application.add_handler(CommandHandler("status", bot.cmd_status))
+    application.add_handler(CommandHandler("status_4h", bot.cmd_status_4h))
     application.add_handler(CommandHandler("check", bot.cmd_check))
     application.add_handler(CommandHandler("compare", bot.cmd_compare))
 
