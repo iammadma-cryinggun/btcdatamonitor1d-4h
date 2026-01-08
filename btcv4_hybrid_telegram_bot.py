@@ -125,11 +125,12 @@ class BTCV40System:
         self.last_status_text = status_text
         self.last_suggestion = suggestion
 
+        # 转义alert level中的星号
         report = f"""
-*📊 V4.0 系统* ({timeframe})
-{status_emoji} *{status_text}*
+*📊 V4.0 系统* \\({timeframe}\\)
+{status_emoji} \\*{status_text}\\*
 💰 价格: `${diagnosis['price']:,.2f}`
-📊 LS: `{diagnosis['ls']:.3f}` (30天分位: `{diagnosis['ls_rank']:.1f}%`)
+📊 LS: `{diagnosis['ls']:.3f}` \\(30天分位: `{diagnosis['ls_rank']:.1f}%`\\)
 💼 OI: `${diagnosis['oi']:,.2f}M`
 💥 清算: `${diagnosis['liq']:,.0f}`
 
@@ -270,10 +271,10 @@ class BTCV41System:
         env_text = env_emoji.get(market_env['environment'], market_env['environment'])
 
         if filter_action == 'FILTERED':
-            filter_status = f"🔕 **已过滤** ({env_text})"
+            filter_status = f"🔕 \\*\\*已过滤\\*\\* ({env_text})"
             filter_reason = f"牛市阶段跳过做空（价格趋势: {market_env['price_trend']:+.1f}%）"
         else:
-            filter_status = f"✅ **执行** ({env_text})"
+            filter_status = f"✅ \\*\\*执行\\*\\* ({env_text})"
             filter_reason = f"市场环境适合（价格趋势: {market_env['price_trend']:+.1f}%）"
 
         level_emoji = {
@@ -284,13 +285,16 @@ class BTCV41System:
         }
         level_emoji_text = level_emoji.get(alert['level'], '⚪')
 
+        # 转义alert level中的特殊字符
+        safe_level = alert['level'].replace('(', '\\(').replace(')', '\\)').replace('*', '\\*')
+
         details = alert['details']
 
         report = f"""
-*🔍 V4.0.1 系统* (V7.0引擎)
-{level_emoji_text} **{alert['level']}** (Score: {alert['pulse_score']:.1f})
+*🔍 V4.0.1 系统* \\(V7.0引擎\\)
+{level_emoji_text} \\*\\*{safe_level}\\*\\* \\(Score: {alert['pulse_score']:.1f}\\)
 • 方向: `{alert['direction']}`
-• Z_Liq: `{details.get('z_liq', 0):.2f}`
+• Z\\_Liq: `{details.get('z_liq', 0):.2f}`
 • Δ²LS: `{details.get('delta2_ls', 0):.4f}`
 
 *🌍 市场环境*
@@ -305,7 +309,7 @@ class BTCV41System:
             if filter_action == 'FILTERED':
                 report += "⚠️ LEVEL 3但牛市，建议跳过\n"
             else:
-                report += "🚨 LEVEL 3且适合，**坚决做空**\n"
+                report += "🚨 LEVEL 3且适合，\\*\\*坚决做空\\*\\*\n"
         elif 'LEVEL 2' in alert['level']:
             report += "⚠️ LEVEL 2临界状态\n"
         else:
@@ -554,14 +558,14 @@ class BTCHybridBot:
                 v41_filtered = 0
 
             compare_report = f"""
-📊 *V4.0 vs V4.0.1 对比统计*
+📊 \\*V4.0 vs V4.0.1 对比统计\\*
 
-*📈 V4.0 系统（百分位评分）*
+*📈 V4.0 系统\\(百分位评分\\)*
 • 总查询数: `{v40_total}` 次
-• 高风险警报: `{v40_high_risk}` 次 (Crash >= 75)
+• 高风险警报: `{v40_high_risk}` 次 \\(Crash >= 75\\)
 • 准确率: 需要手动验证日志
 
-*🔍 V4.0.1 系统（V7.0引擎）*
+*🔍 V4.0.1 系统\\(V7.0引擎\\)*
 • 总预警数: `{v41_total}` 次
 • LEVEL 3: `{v41_level3}` 次
 • 已执行: `{v41_executed}` 次
@@ -572,7 +576,7 @@ class BTCHybridBot:
 • V4.0: `btcv4_query_log.csv`
 • V4.0.1: `btcv4_1_alert_log.csv`
 
-💡 *建议*: 定期下载日志文件，手动填写actual_outcome进行准确性对比
+💡 \\*建议\\*: 定期下载日志文件，手动填写actual\\_outcome进行准确性对比
 
 🕐 `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
             """
@@ -584,14 +588,14 @@ class BTCHybridBot:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """帮助命令"""
         help_text = """
-📖 *BTC混合Bot 使用说明*
+📖 \\*BTC混合Bot 使用说明\\*
 
-*🔍 V4.0 命令（百分位评分）*
+*🔍 V4.0 命令\\(百分位评分\\)*
 • /1d - 查看V4.0日线诊断
-• /1h [价格] [成交量] - V4.0分析1H数据
-• /4h [价格] [成交量] - V4.0分析4H数据
+• /1h \\[价格\\] \\[成交量\\] - V4.0分析1H数据
+• /4h \\[价格\\] \\[成交量\\] - V4.0分析4H数据
 
-*🔍 V4.0.1 命令（V7.0引擎）*
+*🔍 V4.0.1 命令\\(V7.0引擎\\)*
 • /status - 查看V4.0.1当前状态
 • /compare - 对比两个系统的统计信息
 
@@ -732,7 +736,7 @@ class BTCHybridBot:
     def format_hybrid_report(self, data, v40_diagnosis, v41_alert, market_env, filter_action):
         """格式化混合报告"""
         report = f"""
-📊 *BTC混合系统监控报告*
+📊 \\*BTC混合系统监控报告\\*
 
 💰 价格: `${data['price']:,.2f}`
 📊 LS: `{data['ls']:.3f}`
