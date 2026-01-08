@@ -532,6 +532,48 @@ class BTCHybridBot:
             traceback.print_exc()
             await msg.edit_text(f"❌ 状态查询失败: {str(e)}")
 
+    async def cmd_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """查看当前实时市场数据"""
+        msg = await update.message.reply_text("⏳ 正在获取实时数据...")
+
+        try:
+            result = self.get_current_data()
+            if not result:
+                await msg.edit_text("❌ 无法获取实时数据")
+                return
+
+            # 格式化实时数据报告
+            change_emoji = "📈" if result['change_24h'] >= 0 else "📉"
+            change_color = "+" if result['change_24h'] >= 0 else ""
+
+            report = f"""
+🔴 \\*\\*BTC实时市场数据\\*\\*
+
+📡 \\*\\*数据来源\\*\\*: `{result['data_source']}`
+🕐 \\*\\*更新时间\\*\\*: `{result['date'].strftime('%Y-%m-%d %H:%M:%S')}`
+
+💰 \\*\\*当前价格\\*\\*: `${result['price']:,.2f}`
+{change_emoji} \\*\\*24h变化\\*\\*: `{change_color}{result['change_24h']:.2f}%`
+📊 \\*\\*24h最高\\*\\*: `${result['high_24h']:,.2f}`
+📊 \\*\\*24h最低\\*\\*: `${result['low_24h']:,.2f}`
+📦 \\*\\*24h成交量\\*\\*: `{result['volume']:,.0f} BTC`
+
+━━━━━━━━━━━━━━━━━━━━
+📊 \\*\\*多空比\\*\\*: `{result['ls']:.3f}`
+💼 \\*\\*持仓量\\*\\*: `${result['oi']:,.2f}M`
+💥 \\*\\*清算量\\*\\*: `${result['liq']:,.0f}`
+📈 \\*\\*资金费率\\*\\*: `{result.get('fr', 0):.3f}%`
+
+💡 这是目前最新的实时市场数据
+            """
+
+            await msg.edit_text(report, parse_mode='Markdown')
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await msg.edit_text(f"❌ 实时数据查询失败: {str(e)}")
+
     async def cmd_compare(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """对比两个系统的统计信息"""
         try:
@@ -596,12 +638,17 @@ class BTCHybridBot:
 • /4h \\[价格\\] \\[成交量\\] - V4.0分析4H数据
 
 *🔍 V4.0.1 命令\\(V7.0引擎\\)*
-• /status - 查看V4.0.1当前状态
+• /status - 查看混合系统状态（已收盘交易日数据）
+• /check - 查看实时市场数据（当前最新ticker）
 • /compare - 对比两个系统的统计信息
 
 *📊 系统特性*
 • V4.0: 百分位评分 + Crash/Surge评分
 • V4.0.1: V7.0引擎 + 三级预警 + 市场过滤器
+
+*📅 数据说明*
+• /status 使用已收盘交易日的完整数据（4.0和4.0.1时间同步）
+• /check 使用当前最新的实时ticker数据
 
 *📝 日志系统*
 • 两个系统独立记录日志
@@ -614,7 +661,7 @@ class BTCHybridBot:
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
     def get_realtime_data(self):
-        """获取实时数据"""
+        """获取实时数据（最后一个已收盘的交易日）"""
         result = {}
 
         # Binance价格和成交量
@@ -640,6 +687,10 @@ class BTCHybridBot:
 
             result['price'] = float(selected_kline[4])
             result['volume'] = float(selected_kline[5])
+            # 添加K线日期（转换为北京时间）
+            close_time_ts = int(selected_kline[6]) / 1000
+            result['date'] = datetime.fromtimestamp(close_time_ts)
+            result['data_source'] = 'API (已收盘交易日)'
 
         except Exception as e:
             print(f"[ERROR] Binance API错误: {e}")
@@ -733,10 +784,123 @@ class BTCHybridBot:
 
         return result
 
+    def get_current_data(self):
+        """获取当前最新ticker数据（实时）"""
+        result = {}
+
+        try:
+            # 获取当前ticker价格
+            url = "https://api.binance.com/api/v3/ticker/24hr"
+            params = {'symbol': 'BTCUSDT'}
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            ticker = response.json()
+
+            result['price'] = float(ticker['lastPrice'])
+            result['volume'] = float(ticker['volume'])
+            result['change_24h'] = float(ticker['priceChangePercent'])
+            result['high_24h'] = float(ticker['highPrice'])
+            result['low_24h'] = float(ticker['lowPrice'])
+            result['date'] = datetime.now()
+            result['data_source'] = 'API (实时ticker)'
+
+            # 获取当前LS/OI/FR（使用最新的API数据）
+            now = datetime.now()
+            to_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            from_date = to_date - timedelta(days=3)
+            from_ts = int(from_date.timestamp())
+            to_ts = int(to_date.timestamp())
+
+            headers = {'Authorization': f'Bearer {COINALYZE_API_KEY}'}
+
+            # LS-Ratio
+            try:
+                url = f"{COINALYZE_BASE_URL}/long-short-ratio-history"
+                params = {
+                    'symbols': 'BTCUSD_PERP.A',
+                    'interval': 'daily',
+                    'from': from_ts,
+                    'to': to_ts
+                }
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()[0]['history']
+                    for item in reversed(data):
+                        if item.get('r') is not None:
+                            result['ls'] = item['r']
+                            break
+                else:
+                    result['ls'] = self.df['多空比(LS)'].dropna().tail(1).iloc[0]
+            except:
+                result['ls'] = self.df['多空比(LS)'].dropna().tail(1).iloc[0]
+
+            # OI
+            try:
+                url = f"{COINALYZE_BASE_URL}/open-interest-history"
+                params = {
+                    'symbols': 'BTCUSD_PERP.A',
+                    'interval': 'daily',
+                    'from': from_ts,
+                    'to': to_ts
+                }
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()[0]['history']
+                    for item in reversed(data):
+                        if item.get('c') is not None:
+                            result['oi'] = item['c'] / 1_000_000
+                            break
+                else:
+                    result['oi'] = self.df['持仓量(OI-百万)'].dropna().tail(1).iloc[0]
+            except:
+                result['oi'] = self.df['持仓量(OI-百万)'].dropna().tail(1).iloc[0]
+
+            # FR
+            try:
+                url = f"{COINALYZE_BASE_URL}/funding-rate-history"
+                params = {
+                    'symbols': 'BTCUSD_PERP.A',
+                    'interval': 'daily',
+                    'from': from_ts,
+                    'to': to_ts
+                }
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()[0]['history']
+                    for item in reversed(data):
+                        if item.get('r') is not None:
+                            result['fr'] = item['r']
+                            break
+                else:
+                    result['fr'] = self.df['资金费率(%)'].dropna().tail(1).iloc[0]
+            except:
+                result['fr'] = self.df['资金费率(%)'].dropna().tail(1).iloc[0]
+
+            # 清算量（使用历史数据最新值）
+            liq_series = self.df['清算量(美元)'].dropna()
+            liq_nonzero = liq_series[liq_series > 0]
+            if len(liq_nonzero) > 0:
+                result['liq'] = liq_nonzero.tail(1).iloc[0]
+            else:
+                result['liq'] = liq_series.tail(1).iloc[0]
+
+        except Exception as e:
+            print(f"[ERROR] 获取实时ticker失败: {e}")
+            return None
+
+        return result
+
     def format_hybrid_report(self, data, v40_diagnosis, v41_alert, market_env, filter_action):
         """格式化混合报告"""
+        # 获取数据日期（如果有的话）
+        data_date = data.get('date', datetime.now())
+        data_source = data.get('data_source', 'CSV (历史数据)')
+
         report = f"""
 📊 \\*BTC混合系统监控报告\\*
+
+📅 \\*\\*数据日期\\*\\*: `{data_date.strftime('%Y-%m-%d')}`
+📡 \\*\\*数据来源\\*\\*: `{data_source}`
 
 💰 价格: `${data['price']:,.2f}`
 📊 LS: `{data['ls']:.3f}`
@@ -776,6 +940,7 @@ if __name__ == "__main__":
 
     # 注册V4.0.1命令处理器
     application.add_handler(CommandHandler("status", bot.cmd_status))
+    application.add_handler(CommandHandler("check", bot.cmd_check))
     application.add_handler(CommandHandler("compare", bot.cmd_compare))
 
     # 注册帮助命令
