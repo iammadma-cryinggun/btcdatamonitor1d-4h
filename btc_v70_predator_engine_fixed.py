@@ -155,7 +155,7 @@ class V70PredatorEngineFixed:
         """生成V7.0预警信号"""
         if len(self.history_df) < self.zscore_window:
             return {"level": "NO_SIGNAL", "pulse_score": 0, "direction": "UNKNOWN",
-                   "details": "Insufficient data"}
+                   "details": {"description": "Insufficient data", "current_price": 0, "ls_ratio": 0}}
 
         current_df = self.history_df.copy()
 
@@ -195,7 +195,7 @@ class V70PredatorEngineFixed:
         if pd.isna(z_liq) or pd.isna(z_vol) or pd.isna(z_oi) or \
            pd.isna(z_div_oi) or pd.isna(weighted_delta2_ls) or pd.isna(current_atr):
             return {"level": "NO_SIGNAL", "pulse_score": 0, "direction": "UNKNOWN",
-                   "details": "Insufficient data for all factors"}
+                   "details": {"description": "Insufficient data for all factors", "current_price": 0, "ls_ratio": 0}}
 
         # 4. 计算Pulse Score
         pulse_score = (
@@ -238,26 +238,37 @@ class V70PredatorEngineFixed:
 
         # 7. 确定预警等级
         alert_level = "NO_SIGNAL"
-        details = f"Pulse: {pulse_score:.2f}, Dir: {direction}, Z_Liq: {z_liq:.2f}, Δ²LS: {weighted_delta2_ls:.4f}"
+        details_desc = f"Pulse: {pulse_score:.2f}, Dir: {direction}, Z_Liq: {z_liq:.2f}, Δ²LS: {weighted_delta2_ls:.4f}"
 
         if pulse_score >= self.score_threshold_level3:
             alert_level = "LEVEL 3 (坍塌)"
-            details += ", All factors Z > 3.0 (resonance)"
+            details_desc += ", All factors Z > 3.0 (resonance)"
         elif pulse_score >= self.score_threshold_level2:
             alert_level = "LEVEL 2 (临界)"
-            details += ", Z_Liq > 2.5 & Accel > 45°"
+            details_desc += ", Z_Liq > 2.5 & Accel > 45°"
         elif pulse_score >= self.score_threshold_level1:
             alert_level = "LEVEL 1 (监视)"
-            details += ", Z_Liq > 1.5 & Accel Positive"
+            details_desc += ", Z_Liq > 1.5 & Accel Positive"
 
         if liq_gravity_filter_active:
-            details += " [Liq Gravity Filter Applied]"
+            details_desc += " [Liq Gravity Filter Applied]"
+
+        # 返回字典格式的details
+        details_dict = {
+            "description": details_desc,
+            "current_price": latest["收盘价"],
+            "ls_ratio": latest["多空比(LS)"],
+            "delta2_ls": weighted_delta2_ls,
+            "z_liq": z_liq,
+            "z_vol": z_vol,
+            "z_div_oi": z_div_oi
+        }
 
         return {
             "level": alert_level,
             "pulse_score": pulse_score,
             "direction": direction,
-            "details": details
+            "details": details_dict
         }
 
 
