@@ -154,7 +154,7 @@ class V70PredatorEngineFixed:
     def get_predator_alert(self) -> dict:
         """生成V7.0预警信号"""
         if len(self.history_df) < self.zscore_window:
-            return {"level": "NO_SIGNAL", "pulse_score": 0,
+            return {"level": "NO_SIGNAL", "pulse_score": 0, "direction": "UNKNOWN",
                    "details": "Insufficient data"}
 
         current_df = self.history_df.copy()
@@ -194,7 +194,7 @@ class V70PredatorEngineFixed:
         # 处理NaN
         if pd.isna(z_liq) or pd.isna(z_vol) or pd.isna(z_oi) or \
            pd.isna(z_div_oi) or pd.isna(weighted_delta2_ls) or pd.isna(current_atr):
-            return {"level": "NO_SIGNAL", "pulse_score": 0,
+            return {"level": "NO_SIGNAL", "pulse_score": 0, "direction": "UNKNOWN",
                    "details": "Insufficient data for all factors"}
 
         # 4. 计算Pulse Score
