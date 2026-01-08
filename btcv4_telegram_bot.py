@@ -268,16 +268,41 @@ class BTCV4Bot:
         """获取实时数据"""
         result = {}
 
-        # Binance价格和成交量（获取昨天的已收盘日线数据）
+        # Binance价格和成交量（获取前一个完整交易日的日线数据）
         try:
             url = "https://api.binance.com/api/v3/klines"
-            params = {'symbol': 'BTCUSDT', 'interval': '1d', 'limit': 2}
+            params = {'symbol': 'BTCUSDT', 'interval': '1d', 'limit': 5}
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
-            data = response.json()[0]  # 取data[0]是昨天已收盘的日线，data[1]是今天正在形成中的
+            all_klines = response.json()
 
-            result['price'] = float(data[4])
-            result['volume'] = float(data[5])
+            # 找到最近一个已收盘的完整K线（排除正在形成的今日K线）
+            # K线格式: [open_time, open, high, low, close, volume, close_time, ...]
+            # 如果最新K线的close_time还没到当前时间，说明正在形成中
+            import time
+            current_time = int(time.time() * 1000)  # 当前时间戳（毫秒）
+
+            selected_kline = None
+            selected_date = None
+
+            for kline in reversed(all_klines):  # 从最新的开始查找
+                close_time = int(kline[6])  # K线收盘时间
+                if close_time < current_time:  # 已收盘
+                    selected_kline = kline
+                    selected_date = datetime.fromtimestamp(close_time / 1000)
+                    break
+
+            if selected_kline is None:
+                # 如果没找到，使用倒数第2条（倒数第1条可能正在形成）
+                selected_kline = all_klines[-2]
+                selected_date = datetime.fromtimestamp(int(selected_kline[6]) / 1000)
+
+            result['price'] = float(selected_kline[4])  # close price
+            result['volume'] = float(selected_kline[5])  # volume
+
+            print(f"📊 Binance K线日期: {selected_date.strftime('%Y-%m-%d')} (已收盘)")
+            print(f"📊 Binance价格: ${result['price']:,.2f}")
+            print(f"📊 Binance成交量: {result['volume']:,.0f} BTC")
 
         except Exception as e:
             print(f"Binance API错误: {e}")
