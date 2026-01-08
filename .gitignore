@@ -3,6 +3,7 @@
 
 # 日志文件
 btcv4_query_log.csv
+btcv4_1_alert_log.csv
 *.log
 
 # PID文件
