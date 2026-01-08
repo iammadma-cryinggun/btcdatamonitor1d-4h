@@ -285,8 +285,11 @@ class BTCV4Bot:
 
         # Coinalyze LS-Ratio
         try:
-            to_date = datetime.now()
-            from_date = to_date - timedelta(days=2)
+            # 修复：统一使用UTC 0点，避免不同时间查询结果不一致
+            # 查询最近3天数据以确保获取到最新的一天
+            now = datetime.now()
+            to_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            from_date = to_date - timedelta(days=3)
             from_ts = int(from_date.timestamp())
             to_ts = int(to_date.timestamp())
 
@@ -302,12 +305,18 @@ class BTCV4Bot:
             response = requests.get(url, params=params, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()[0]['history']
+                # 调试：记录查询时间窗口和返回数据量
+                print(f"📊 LS查询窗口: {from_date.strftime('%Y-%m-%d %H:%M')} ~ {to_date.strftime('%Y-%m-%d %H:%M')} (UTC)")
+                print(f"📊 LS返回数据点: {len(data)}条")
                 for item in reversed(data):
                     if item.get('r') is not None:
                         result['ls'] = item['r']
+                        ls_timestamp = datetime.fromtimestamp(item.get('t', 0))
+                        print(f"📊 LS选定值: {item['r']:.3f} (时间: {ls_timestamp.strftime('%Y-%m-%d %H:%M')})")
                         break
             else:
                 result['ls'] = self.df['多空比(LS)'].dropna().tail(1).iloc[0]
+                print(f"⚠️ LS API失败，使用CSV备用值: {result['ls']:.3f}")
 
         except Exception as e:
             print(f"LS API错误: {e}")
@@ -326,12 +335,17 @@ class BTCV4Bot:
             response = requests.get(url, params=params, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()[0]['history']
+                # 调试：记录返回数据量和选定值
+                print(f"📊 OI返回数据点: {len(data)}条")
                 for item in reversed(data):
                     if item.get('c') is not None:
                         result['oi'] = item['c'] / 1_000_000
+                        oi_timestamp = datetime.fromtimestamp(item.get('t', 0))
+                        print(f"📊 OI选定值: ${item['c']/1_000_000:,.2f}M (时间: {oi_timestamp.strftime('%Y-%m-%d %H:%M')})")
                         break
             else:
                 result['oi'] = self.df['持仓量(OI-百万)'].dropna().tail(1).iloc[0]
+                print(f"⚠️ OI API失败，使用CSV备用值: ${result['oi']:,.2f}M")
 
         except Exception as e:
             print(f"OI API错误: {e}")
@@ -345,12 +359,27 @@ class BTCV4Bot:
         else:
             result['liq'] = liq_series.tail(1).iloc[0]
 
+        # 调试：汇总所有获取的数据
+        print(f"\n{'='*60}")
+        print(f"📊 get_realtime_data汇总 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+        print(f"{'='*60}")
+        print(f"价格: ${result['price']:,.2f}")
+        print(f"成交量: {result['volume']:,.0f} BTC")
+        print(f"多空比: {result['ls']:.3f}")
+        print(f"持仓量: ${result['oi']:,.2f}M")
+        print(f"清算量: ${result['liq']:,.0f}")
+        print(f"{'='*60}\n")
+
         return result
 
     def calculate_diagnosis(self, data):
         """计算诊断结果"""
         # 获取参考窗口
         ref_window = self.df.tail(30).copy()
+
+        # 调试：显示参考窗口信息
+        print(f"📊 参考窗口: {ref_window['日期'].min().strftime('%Y-%m-%d')} ~ {ref_window['日期'].max().strftime('%Y-%m-%d')} (30天)")
+        print(f"📊 参考窗口LS范围: {ref_window['多空比(LS)'].min():.3f} ~ {ref_window['多空比(LS)'].max():.3f}")
 
         # 计算百分位
         def get_percentile(value, series):
@@ -366,6 +395,10 @@ class BTCV4Bot:
         # 计算评分
         crash_score = (ls_rank * 0.50 + vol_rank * 0.25 + liq_rank * 0.15 + oi_rank * 0.10)
         surge_score = ((100 - ls_rank) * 0.50 + oi_rank * 0.25 + vol_rank * 0.15 + liq_rank * 0.10)
+
+        # 调试：显示评分详情
+        print(f"📊 分位数: LS={ls_rank:.1f}%, OI={oi_rank:.1f}%, Vol={vol_rank:.1f}%, Liq={liq_rank:.1f}%")
+        print(f"📊 V4.0评分: Crash={crash_score:.1f}, Surge={surge_score:.1f}")
 
         return {
             'price': data['price'],
