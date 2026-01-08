@@ -885,7 +885,7 @@ class BTCHybridBot:
 
 *🔍 V4.0.1 命令\\(V7.0引擎\\)*
 • /status - 查看混合系统状态（已收盘交易日数据）
-• /status_4h - 查看V4.0.1的4小时级别状态（实时K线）
+• /status4h - 查看V4.0.1的4小时级别状态（实时K线）
 • /check - 查看实时市场数据（当前最新ticker）
 • /compare - 对比两个系统的统计信息
 
@@ -896,7 +896,7 @@ class BTCHybridBot:
 
 *📅 数据说明*
 • /status 使用已收盘交易日的完整数据（V4.0和V4.0.1日线时间同步）
-• /status_4h 使用4小时K线数据（更及时，敏感度更高）
+• /status4h 使用4小时K线数据（更及时，敏感度更高）
 • /check 使用当前最新的实时ticker数据
 
 *📝 日志系统*
@@ -1333,7 +1333,7 @@ if __name__ == "__main__":
 
     # 注册V4.0.1命令处理器
     application.add_handler(CommandHandler("status", bot.cmd_status))
-    application.add_handler(CommandHandler("status_4h", bot.cmd_status_4h))
+    application.add_handler(CommandHandler("status4h", bot.cmd_status_4h))
     application.add_handler(CommandHandler("check", bot.cmd_check))
     application.add_handler(CommandHandler("compare", bot.cmd_compare))
 
